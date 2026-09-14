@@ -133,6 +133,118 @@ class AimService : IAimService.Stub() {
         System.exit(0)
     }
 
+    override fun setMode(mode: String) {
+        injector.mode = parseMode(mode)
+    }
+
+    override fun testDrag(mode: String, width: Float, height: Float, displayId: Int): String {
+        val was = injector.mode
+        injector.mode = parseMode(mode)
+        return try {
+            injector.testDrag(width, height, displayId)
+        } catch (e: Throwable) {
+            "test failed: ${e.message}"
+        } finally {
+            injector.mode = was
+        }
+    }
+
+    private fun parseMode(name: String): TouchInjector.Mode =
+        TouchInjector.Mode.entries.firstOrNull { it.name == name }
+            ?: TouchInjector.Mode.TOUCH
+
+    /**
+     * Everything that could be wrong, in one string.
+     *
+     * Written because this runs on a handheld nobody developing it can touch,
+     * and every round trip of "it did not work" costs a day. Each line answers
+     * one question that would otherwise be a guess: whether the privilege
+     * arrived, whether the kernel nodes are readable, which devices look like a
+     * pad, and whether the injection call even resolves.
+     */
+    override fun diagnose(): String = buildString {
+        val nl = "\n"
+        append("uid ${android.os.Process.myUid()}")
+        append(" (2000 is shell, which is what Shizuku should give)").append(nl)
+
+        val inputDir = java.io.File("/dev/input")
+        val nodes = inputDir.listFiles()?.filter { it.name.startsWith("event") }
+            ?.sortedBy { it.name } ?: emptyList()
+        append(nl).append("/dev/input: ${nodes.size} nodes")
+        if (nodes.isEmpty()) {
+            append(" — cannot list, so the input group was not granted").append(nl)
+        } else {
+            append(nl)
+            for (node in nodes) {
+                append("  ${node.name} ")
+                append(if (node.canRead()) "readable" else "NOT readable")
+                append(nl)
+            }
+        }
+
+        append(nl).append("devices that look like a pad:").append(nl)
+        val candidates = try {
+            Evdev.devices()
+        } catch (e: Throwable) {
+            append("  reading /proc/bus/input/devices failed: ${e.message}").append(nl)
+            emptyList()
+        }
+        if (candidates.isEmpty()) append("  (none listed)").append(nl)
+        for (device in candidates) {
+            val stick = device.rightStick
+            append("  ${device.path}  \"${device.name}\"")
+            if (device.looksLikeGamepad) append("  <- gamepad")
+            append(nl)
+            append("     abs=${device.absCodes.sorted().take(12)}")
+            append(" stick=")
+            append(stick?.let { "${it.first}/${it.second}" } ?: "none")
+            append(nl)
+        }
+
+        append(nl).append("Android's own view of attached pads:").append(nl)
+        try {
+            var found = 0
+            for (id in android.view.InputDevice.getDeviceIds()) {
+                val device = android.view.InputDevice.getDevice(id) ?: continue
+                val sources = device.sources
+                val isPad = sources and android.view.InputDevice.SOURCE_GAMEPAD != 0 ||
+                    sources and android.view.InputDevice.SOURCE_JOYSTICK != 0
+                if (!isPad) continue
+                found++
+                val rx = device.getMotionRange(android.view.MotionEvent.AXIS_RX)
+                val rz = device.getMotionRange(android.view.MotionEvent.AXIS_RZ)
+                append("  \"${device.name}\"")
+                append(" rx=")
+                append(rx?.let { "${it.min.toInt()}..${it.max.toInt()}" } ?: "-")
+                append(" rz=")
+                append(rz?.let { "${it.min.toInt()}..${it.max.toInt()}" } ?: "-")
+                append(nl)
+            }
+            if (found == 0) append("  (none)").append(nl)
+        } catch (e: Throwable) {
+            append("  failed: ${e.message}").append(nl)
+        }
+
+        append(nl).append("injection: ")
+        append(if (injector.prepare()) "injectInputEvent resolved" else "UNAVAILABLE")
+        injector.lastError?.let { append(nl).append("  last error: $it") }
+        append(nl).append("  last call accepted: ")
+        append(injector.lastAccepted?.toString() ?: "not called yet")
+        append(nl).append("  mode: ${injector.mode.label}")
+
+        append(nl).append(nl).append("/dev/uinput: ")
+        append(
+            try {
+                java.io.FileOutputStream("/dev/uinput").use { "openable" }
+            } catch (e: Throwable) {
+                "no (${e.javaClass.simpleName}) — expected without root"
+            }
+        )
+
+        append(nl).append("service running: $running, aiming: $enabled")
+        append(nl).append("status: $report")
+    }
+
     private fun startReader(path: String, codeX: Int, codeY: Int) {
         reader = thread(name = "thoraim-evdev", isDaemon = true) {
             try {

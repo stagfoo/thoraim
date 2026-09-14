@@ -18,6 +18,26 @@ import android.view.MotionEvent
  */
 class TouchInjector {
 
+    /**
+     * What kind of pointer to pretend to be.
+     *
+     * Three, because which one a game listens to is not something that can be
+     * reasoned out from here. Unity's input handling in particular treats these
+     * differently depending on which input module the game was built with, and
+     * NIKKE is a Unity game.
+     */
+    enum class Mode(val source: Int, val toolType: Int, val label: String) {
+        TOUCH(InputDevice.SOURCE_TOUCHSCREEN, MotionEvent.TOOL_TYPE_FINGER, "touchscreen"),
+        MOUSE(InputDevice.SOURCE_MOUSE, MotionEvent.TOOL_TYPE_MOUSE, "mouse"),
+        STYLUS(InputDevice.SOURCE_STYLUS, MotionEvent.TOOL_TYPE_STYLUS, "stylus"),
+    }
+
+    var mode: Mode = Mode.TOUCH
+
+    /** Whether the last injection was accepted. Null before anything was sent. */
+    var lastAccepted: Boolean? = null
+        private set
+
     private var downTime = 0L
     private var down = false
     private var injector: ((MotionEvent) -> Boolean)? = null
@@ -85,17 +105,81 @@ class TouchInjector {
 
     private fun send(action: Int, x: Float, y: Float, displayId: Int) {
         val now = SystemClock.uptimeMillis()
-        val event = MotionEvent.obtain(downTime, now, action, x, y, 0)
-        event.source = InputDevice.SOURCE_TOUCHSCREEN
+
+        // The long form of obtain, because the short one cannot set buttonState
+        // or toolType — and a mouse with no button held is a hover, which is
+        // not a click, which is the entire difference between the modes.
+        val properties = arrayOf(
+            MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = mode.toolType
+            }
+        )
+        val coords = arrayOf(
+            MotionEvent.PointerCoords().apply {
+                this.x = x
+                this.y = y
+                pressure = if (action == MotionEvent.ACTION_UP) 0f else 1f
+                size = 1f
+            }
+        )
+        val buttons = when {
+            mode != Mode.TOUCH && action != MotionEvent.ACTION_UP ->
+                MotionEvent.BUTTON_PRIMARY
+            else -> 0
+        }
+
+        val event = MotionEvent.obtain(
+            downTime, now, action, 1, properties, coords,
+            0, buttons, 1f, 1f, 0, 0, mode.source, 0,
+        )
         // On a two-screen handheld this is the difference between aiming the
         // game and aiming the other panel.
         setDisplayId(event, displayId)
         try {
-            injector?.invoke(event)
+            lastAccepted = injector?.invoke(event)
         } catch (e: Throwable) {
             lastError = "inject: ${e.message}"
+            lastAccepted = false
         } finally {
             event.recycle()
+        }
+    }
+
+    /**
+     * Drags across the middle of the screen once, for checking whether anything
+     * lands at all.
+     *
+     * Separate from aiming on purpose: if this moves a list in any scrollable
+     * app, injection works and the problem is the stick, the region or the
+     * game. If it does nothing anywhere, injection is the problem and nothing
+     * about the aiming settings matters yet.
+     */
+    fun testDrag(width: Float, height: Float, displayId: Int): String {
+        if (!prepare()) return "cannot reach injectInputEvent: ${'$'}lastError"
+
+        val y = height * 0.5f
+        press(width * 0.25f, y, displayId)
+        val accepted = lastAccepted
+        for (i in 1..20) {
+            Thread.sleep(12)
+            drag(width * (0.25f + 0.5f * i / 20f), y, displayId)
+        }
+        Thread.sleep(12)
+        lift(width * 0.75f, y, displayId)
+
+        return buildString {
+            append("sent a ${'$'}{mode.label} drag across the middle of display ${'$'}displayId")
+            append(" (${'$'}{(width * 0.25f).toInt()} to ${'$'}{(width * 0.75f).toInt()} at y ${'$'}{y.toInt()})")
+            append("\ninjectInputEvent returned ")
+            append(
+                when (accepted) {
+                    true -> "true — the system accepted it"
+                    false -> "false — the system refused it"
+                    null -> "nothing"
+                }
+            )
+            lastError?.let { append("\nerror: ${'$'}it") }
         }
     }
 

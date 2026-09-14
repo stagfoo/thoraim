@@ -64,11 +64,36 @@ middle throws away half the travel before you have moved.
 
 Sliders apply live over Binder without dropping the stroke that is down.
 
-**If it does not work**, press *Watch the stick* first. Reading the pad and
-injecting touch are two separate privileges that fail separately, and a dead aim
-looks identical whichever one broke. If those numbers move when you push the
-stick, evdev is fine and the problem is injection — which the same readout
-reports.
+## If it does not work
+
+Three buttons, in this order. They exist because reading the pad and injecting
+touch are separate privileges that fail separately, and a dead aim looks
+identical whichever one broke.
+
+**Diagnose** — one screenful covering every thing that could be wrong: the uid
+the service got, whether `/dev/input` is readable and which nodes, which devices
+look like a pad and what axes they carry, what Android thinks is attached, and
+whether `injectInputEvent` resolved.
+
+**Watch the stick** — live axis values. If these move when you push the stick,
+evdev is working and the problem is downstream.
+
+**Test drag** — sends one visible drag across the middle of the screen. If it
+scrolls a list in *any* app, injection works and what is wrong is the stick, the
+region or the game. If it does nothing anywhere, injection is the problem and no
+aiming setting matters yet.
+
+### Pretend to be
+
+Injected events can claim to come from a touchscreen, a mouse or a stylus. NIKKE
+is Unity, and which of the three its input module listens to is not something
+that can be settled from outside the device — try each against *Test drag*.
+
+Note that a mouse is not a shortcut around the travel problem: the Android
+emulators that advertise mouse aiming for NIKKE all *synthesise touch*
+(BlueStacks says so outright — its keymapper "emulates the touch and tap you
+would make on your mobile device"), and their shooter modes hit the same
+recentring hitch and solve it the same way.
 
 ## Layout
 

@@ -29,6 +29,8 @@ data class Settings(
     val screenWidth: Float = 1080f,
     val screenHeight: Float = 1920f,
     val displayId: Int = 0,
+    /** TOUCH, MOUSE or STYLUS — which pointer the injected events claim to be. */
+    val injectMode: String = "TOUCH",
 ) {
     fun toConfigText(): String = buildString {
         appendLine("# written by thoraim; edited live, reloaded on SIGHUP")
@@ -48,6 +50,7 @@ data class Settings(
         appendLine("screen_width=$screenWidth")
         appendLine("screen_height=$screenHeight")
         appendLine("display_id=$displayId")
+        appendLine("inject_mode=$injectMode")
     }
 
     companion object {
@@ -74,6 +77,7 @@ data class Settings(
                 pollHz = p.getInt("pollHz", d.pollHz),
                 toggleButton = p.getInt("toggleButton", d.toggleButton),
                 startEnabled = p.getBoolean("startEnabled", d.startEnabled),
+                injectMode = p.getString("injectMode", d.injectMode) ?: d.injectMode,
             )
         }
 
@@ -129,6 +133,7 @@ data class Settings(
                 screenWidth = f("screen_width", d.screenWidth).coerceAtLeast(1f),
                 screenHeight = f("screen_height", d.screenHeight).coerceAtLeast(1f),
                 displayId = i("display_id", d.displayId),
+                injectMode = values["inject_mode"] ?: d.injectMode,
             )
         }
     }
@@ -148,6 +153,7 @@ data class Settings(
             putInt("pollHz", pollHz)
             putInt("toggleButton", toggleButton)
             putBoolean("startEnabled", startEnabled)
+            putString("injectMode", injectMode)
         }.apply()
     }
 

@@ -94,24 +94,28 @@ class MainActivity : Activity() {
      * other screen.
      */
     private fun outgoing(): String {
+        val (width, height) = windowBounds()
+        return settings.copy(
+            screenWidth = width,
+            screenHeight = height,
+            displayId = currentDisplayId(),
+        ).toConfigText()
+    }
+
+    private fun windowBounds(): Pair<Float, Float> {
         val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             windowManager.currentWindowMetrics.bounds
         } else {
             null
         }
-        val width = bounds?.width() ?: resources.displayMetrics.widthPixels
-        val height = bounds?.height() ?: resources.displayMetrics.heightPixels
-        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            display?.displayId ?: 0
-        } else {
-            0
-        }
-        return settings.copy(
-            screenWidth = width.toFloat(),
-            screenHeight = height.toFloat(),
-            displayId = display,
-        ).toConfigText()
+        return Pair(
+            (bounds?.width() ?: resources.displayMetrics.widthPixels).toFloat(),
+            (bounds?.height() ?: resources.displayMetrics.heightPixels).toFloat(),
+        )
     }
+
+    private fun currentDisplayId(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display?.displayId ?: 0 else 0
 
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
@@ -141,6 +145,11 @@ class MainActivity : Activity() {
         buttons.addView(button("Apply") { onApply() })
         buttons.addView(button("Log") { refreshLog() })
         root.addView(buttons)
+
+        val checks = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        checks.addView(button("Diagnose") { runDiagnose() })
+        checks.addView(button("Test drag") { runTestDrag() })
+        root.addView(checks)
 
         probe = TextView(this).apply {
             setTextColor(Color.parseColor("#8FB8D4"))
@@ -252,6 +261,33 @@ class MainActivity : Activity() {
                 "Ticks per second. Higher is smoother and costs a little battery."
             ) { settings = settings.copy(pollHz = it.roundToInt()); onChanged() }
         )
+
+        root.addView(section("Pretend to be"))
+        root.addView(
+            note(
+                "Which kind of pointer the injected events claim to come from. " +
+                    "NIKKE is a Unity game and which one it listens to is not " +
+                    "something that can be worked out from the outside — try " +
+                    "each with Test drag."
+            )
+        )
+        for (candidate in listOf("TOUCH", "MOUSE", "STYLUS")) {
+            root.addView(
+                button(candidate.lowercase()) {
+                    settings = settings.copy(injectMode = candidate)
+                    settings.save(this)
+                    try {
+                        client.get()?.setMode(candidate)
+                    } catch (e: Throwable) {
+                        // Not running; Start will send it.
+                    }
+                    log.text = "Now injecting as ${candidate.lowercase()}. " +
+                        "Press Test drag."
+                }.apply {
+                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                }
+            )
+        }
 
         root.addView(
             check("Invert Y", settings.invertY) {
@@ -417,6 +453,52 @@ class MainActivity : Activity() {
             "probe failed: ${e.message}"
         }
         ticker.postDelayed({ pollProbe() }, 100)
+    }
+
+    /**
+     * Sends one visible drag, so injection can be judged on its own.
+     *
+     * If this scrolls a list in any app, injection works and whatever is wrong
+     * is the stick, the region or the game. If it does nothing anywhere,
+     * injection is the problem and no aiming setting matters yet. Those two
+     * cases need completely different fixes, and nothing else tells them apart.
+     */
+    private fun runTestDrag() {
+        val service = client.get()
+        if (service == null) {
+            log.text = "Not running — press Start first."
+            return
+        }
+        log.text = "Testing ${settings.injectMode.lowercase()}…"
+        Thread {
+            val bounds = windowBounds()
+            val result = try {
+                service.testDrag(
+                    settings.injectMode,
+                    bounds.first,
+                    bounds.second,
+                    currentDisplayId(),
+                )
+            } catch (e: Throwable) {
+                "test failed: ${e.message}"
+            }
+            runOnUiThread { log.text = result }
+        }.start()
+    }
+
+    private fun runDiagnose() {
+        val service = client.get()
+        if (service == null) {
+            // Everything useful lives in the service, so without it the only
+            // honest answer is why there isn't one.
+            log.text = "Not running.\n\n${Privilege.describe()}\n\n$SETUP_HELP"
+            return
+        }
+        log.text = try {
+            service.diagnose()
+        } catch (e: Throwable) {
+            "diagnose failed: ${e.message}"
+        }
     }
 
     private fun refreshLog() {
