@@ -16,6 +16,8 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.app.Activity
+import android.content.pm.PackageManager
+import rikka.shizuku.Shizuku
 import kotlin.math.roundToInt
 
 /**
@@ -31,17 +33,72 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var log: TextView
     private lateinit var travel: TextView
+    private lateinit var client: AimClient
+
+    private val onPermission =
+        Shizuku.OnRequestPermissionResultListener { _, grantResult ->
+            runOnUiThread {
+                if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                    log.text = "Allowed. Press Start."
+                }
+                refreshStatus()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = Settings.load(this)
+        client = AimClient(this)
         setContentView(buildUi())
+        try {
+            Shizuku.addRequestPermissionResultListener(onPermission)
+        } catch (e: Throwable) {
+            // Shizuku is not installed; the status line will say so.
+        }
         refreshStatus()
+    }
+
+    override fun onDestroy() {
+        try {
+            Shizuku.removeRequestPermissionResultListener(onPermission)
+        } catch (e: Throwable) {
+            // Nothing bound.
+        }
+        super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
+    }
+
+    /**
+     * The settings, plus where the game actually is.
+     *
+     * The service runs in another process and cannot see a window, so the
+     * screen it should aim at is measured here — this activity is on the panel
+     * you are looking at, which is the panel you want aimed. On a handheld with
+     * two of them that is the difference between aiming the game and aiming the
+     * other screen.
+     */
+    private fun outgoing(): String {
+        val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics.bounds
+        } else {
+            null
+        }
+        val width = bounds?.width() ?: resources.displayMetrics.widthPixels
+        val height = bounds?.height() ?: resources.displayMetrics.heightPixels
+        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.displayId ?: 0
+        } else {
+            0
+        }
+        return settings.copy(
+            screenWidth = width.toFloat(),
+            screenHeight = height.toFloat(),
+            displayId = display,
+        ).toConfigText()
     }
 
     private fun buildUi(): View {
@@ -204,34 +261,58 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------ acts
 
     private fun startDaemon() {
-        if (!Root.available()) {
-            status.text = "No root. /dev/uinput cannot be opened without it, " +
-                "and there is no way round that."
-            return
+        when (Privilege.state()) {
+            Privilege.State.Unavailable -> {
+                status.text = Privilege.describe()
+                log.text = SETUP_HELP
+                return
+            }
+            Privilege.State.NeedsPermission -> {
+                Privilege.requestPermission()
+                return
+            }
+            Privilege.State.Ready -> Unit
         }
+
         settings.save(this)
-        val result = Root.start(
-            applicationInfo.nativeLibraryDir,
-            settings.stage(this),
-            preferredTouchWidth(),
-        )
-        log.text = result.output.trim()
-        refreshStatus()
+        client.connect { service ->
+            runOnUiThread {
+                if (service == null) {
+                    status.text = "Could not start the service through Shizuku."
+                    return@runOnUiThread
+                }
+                log.text = try {
+                    service.start(outgoing())
+                } catch (e: Throwable) {
+                    "start failed: ${e.message}"
+                }
+                refreshStatus()
+            }
+        }
     }
 
     private fun stopDaemon() {
-        Root.stop()
+        try {
+            client.get()?.stop()
+        } catch (e: Throwable) {
+            // Already gone.
+        }
         refreshStatus()
     }
 
     private fun onApply() {
         settings.save(this)
-        if (!Root.isRunning()) {
+        val service = client.get()
+        if (service == null) {
             status.text = "Saved. Not running — press Start."
             return
         }
-        Root.reload(settings.stage(this))
-        status.text = "Applied to the running daemon."
+        try {
+            service.reconfigure(outgoing())
+            status.text = "Applied to the running service."
+        } catch (e: Throwable) {
+            status.text = "Could not apply: ${e.message}"
+        }
     }
 
     private fun onChanged() {
@@ -254,33 +335,23 @@ class MainActivity : Activity() {
             "%.1f hitches per full sweep across it.".format(hitchesPerSweep)
     }
 
-    /**
-     * Which screen to aim at, on a handheld that has two.
-     *
-     * The game is on one of them and the daemon has to pick the same one. The
-     * window's own width is the honest answer: this app is on the screen you
-     * are looking at, which is the screen you want aimed.
-     */
-    private fun preferredTouchWidth(): Int {
-        val metrics = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            windowManager.currentWindowMetrics.bounds
-        } else {
-            null
-        }
-        return metrics?.width() ?: resources.displayMetrics.widthPixels
-    }
-
     private fun refreshStatus() {
-        val root = Root.available()
-        val running = root && Root.isRunning()
+        val state = Privilege.state()
+        val running = try {
+            client.get()?.isRunning == true
+        } catch (e: Throwable) {
+            false
+        }
+
         status.text = when {
-            !root -> "No root — thoraim cannot run."
+            state == Privilege.State.Unavailable -> Privilege.describe()
+            state == Privilege.State.NeedsPermission -> "Shizuku is running. Press Start to allow thoraim."
             running -> "Running. R3 toggles aiming."
-            else -> "Root OK. Not running."
+            else -> "Shizuku ready. Not running."
         }
         status.setTextColor(
             when {
-                !root -> Color.parseColor("#E0725A")
+                state == Privilege.State.Unavailable -> Color.parseColor("#E0725A")
                 running -> Color.parseColor("#9BE28B")
                 else -> Color.parseColor("#C9A227")
             }
@@ -288,7 +359,11 @@ class MainActivity : Activity() {
     }
 
     private fun refreshLog() {
-        log.text = Root.log().trim().ifEmpty { "(nothing logged yet)" }
+        log.text = try {
+            client.get()?.status() ?: SETUP_HELP
+        } catch (e: Throwable) {
+            "status failed: ${e.message}"
+        }
     }
 
     // ----------------------------------------------------------------- views
@@ -373,10 +448,14 @@ class MainActivity : Activity() {
                     if (fromUser) onChange(v)
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) = Unit
-                // Only pushed to the daemon on release: a reload per pixel of
-                // slider travel would be a few hundred root calls a second.
+                // Only pushed on release: a reconfigure per pixel of slider
+                // travel would be a few hundred Binder calls a second.
                 override fun onStopTrackingTouch(bar: SeekBar?) {
-                    if (Root.isRunning()) Root.reload(settings.stage(this@MainActivity))
+                    try {
+                        this@MainActivity.client.get()?.reconfigure(outgoing())
+                    } catch (e: Throwable) {
+                        // The service is not up; Start will send it anyway.
+                    }
                 }
             })
         })
@@ -392,4 +471,16 @@ class MainActivity : Activity() {
 
     private fun format(v: Float): String =
         if (v >= 20f) v.roundToInt().toString() else "%.2f".format(v)
+
+    private companion object {
+        const val SETUP_HELP =
+            "thoraim needs Shizuku, which grants shell privileges without root.\n\n" +
+                "1. Install Shizuku from the Play Store or GitHub.\n" +
+                "2. Start it with wireless debugging (Shizuku walks you through " +
+                "it) — this has to be redone after a reboot.\n" +
+                "3. Come back and press Start, then allow thoraim.\n\n" +
+                "Shell is in the `input` group and holds INJECT_EVENTS, which " +
+                "is why it can read the stick and inject touch while a game is " +
+                "in front. An ordinary app uid can do neither."
+    }
 }

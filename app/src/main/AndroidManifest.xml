@@ -1,12 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
     <application
         android:label="thoraim"
         android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.Material"
         android:allowBackup="false"
-        android:supportsRtl="true"
-        android:extractNativeLibs="true">
+        android:supportsRtl="true">
 
         <activity
             android:name=".MainActivity"
@@ -17,5 +18,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- How Shizuku hands this app the shell-uid privileges it needs. The
+             permission is requested at runtime like any other. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>

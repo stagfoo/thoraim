@@ -17,12 +17,10 @@ android {
         versionCode = 2
         versionName = "1.0.1"
 
-        // Only the Thor's architecture. Shipping the other three would
-        // quadruple an APK whose whole point is being small, for devices this
-        // will never run on.
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
+        // Bumped whenever the service's own code changes, so Shizuku restarts
+        // it instead of leaving an old copy running against a new app.
+        buildConfigField("int", "SERVICE_VERSION", "2")
+
     }
 
     signingConfigs {
@@ -49,28 +47,24 @@ android {
         }
     }
 
-    // The daemon is an executable, not a library, and it has to be unpacked to
-    // disk rather than mapped out of the APK: the exec bit only exists on the
-    // extracted copy. useLegacyPackaging is what sets extractNativeLibs, and
-    // modern AGP defaults it off — which would leave the binary inside the APK
-    // with nothing to run.
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildFeatures {
-        viewBinding = false
+        aidl = true
+        buildConfig = true
     }
 }
 
 dependencies {
-    // Deliberately none. Every one would be weight in an APK that exists to
-    // carry a 20KB binary and eight sliders.
+    // Shizuku is what makes this work without root: it runs a service of ours
+    // as the shell uid, which is in the `input` group (so it can read
+    // /dev/input) and holds INJECT_EVENTS (so it can inject touch). Neither is
+    // reachable from an ordinary app uid, with or without focus.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    testImplementation("junit:junit:4.13.2")
 }

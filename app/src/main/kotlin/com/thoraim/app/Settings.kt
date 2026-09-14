@@ -1,7 +1,6 @@
 package com.thoraim.app
 
 import android.content.Context
-import java.io.File
 
 /**
  * The tuning values, and the file the daemon reads them out of.
@@ -25,6 +24,11 @@ data class Settings(
     val pollHz: Int = 120,
     val toggleButton: Int = BTN_THUMBR,
     val startEnabled: Boolean = true,
+    // Filled in by the app from the window it is running in, so the service
+    // does not have to guess which of two screens the game is on.
+    val screenWidth: Float = 1080f,
+    val screenHeight: Float = 1920f,
+    val displayId: Int = 0,
 ) {
     fun toConfigText(): String = buildString {
         appendLine("# written by thoraim; edited live, reloaded on SIGHUP")
@@ -41,23 +45,15 @@ data class Settings(
         appendLine("poll_hz=$pollHz")
         appendLine("toggle_button=$toggleButton")
         appendLine("start_enabled=${if (startEnabled) 1 else 0}")
+        appendLine("screen_width=$screenWidth")
+        appendLine("screen_height=$screenHeight")
+        appendLine("display_id=$displayId")
     }
 
     companion object {
         const val BTN_THUMBR = 0x13E   // right stick click
         const val BTN_THUMBL = 0x13D
         const val BTN_MODE = 0x13C     // the guide/home button
-
-        /**
-         * Where the config lives.
-         *
-         * Not in the app's own data directory: the daemon runs as root in a
-         * completely separate process, and app-private storage under a modern
-         * Android is not something an unrelated uid should be reaching into.
-         * /data/local/tmp is the shared ground both ends can agree on.
-         */
-        const val CONFIG_PATH = "/data/local/tmp/thoraim.conf"
-        const val LOG_PATH = "/data/local/tmp/thoraim.log"
 
         private const val PREFS = "thoraim"
 
@@ -80,6 +76,61 @@ data class Settings(
                 startEnabled = p.getBoolean("startEnabled", d.startEnabled),
             )
         }
+
+        /**
+         * Reads settings back from the text form.
+         *
+         * The service runs in a different process as a different uid, so the
+         * settings have to survive a trip across a Binder as something simple.
+         * Text, so the same string can be logged and eyeballed when a value
+         * turns out not to be what the slider said.
+         */
+        fun parse(text: String): Settings {
+            val values = mutableMapOf<String, String>()
+            for (line in text.lines()) {
+                val clean = line.substringBefore('#').trim()
+                val key = clean.substringBefore('=', "").trim()
+                if (key.isEmpty()) continue
+                values[key] = clean.substringAfter('=').trim()
+            }
+
+            fun f(key: String, fallback: Float) =
+                values[key]?.toFloatOrNull() ?: fallback
+            fun i(key: String, fallback: Int) =
+                values[key]?.toFloatOrNull()?.toInt() ?: fallback
+            fun b(key: String, fallback: Boolean) =
+                values[key]?.let { it == "1" || it == "true" } ?: fallback
+
+            val d = Settings()
+            // Clamped on the way in rather than trusted: these cross a process
+            // boundary, and a zero poll rate or an inside-out region would be a
+            // hang or a divide by zero rather than a bad setting.
+            var left = f("region_left", d.regionLeft).coerceIn(0f, 1f)
+            var right = f("region_right", d.regionRight).coerceIn(0f, 1f)
+            var top = f("region_top", d.regionTop).coerceIn(0f, 1f)
+            var bottom = f("region_bottom", d.regionBottom).coerceIn(0f, 1f)
+            if (right - left < 0.05f) { left = 0f; right = 1f }
+            if (bottom - top < 0.05f) { top = 0f; bottom = 1f }
+
+            return Settings(
+                deadzone = f("deadzone", d.deadzone).coerceIn(0.01f, 0.9f),
+                curve = f("curve", d.curve).coerceIn(0.2f, 6f),
+                maxSpeed = f("max_speed", d.maxSpeed).coerceIn(0.05f, 20f),
+                invertY = b("invert_y", d.invertY),
+                regionLeft = left,
+                regionTop = top,
+                regionRight = right,
+                regionBottom = bottom,
+                anchorBias = f("anchor_bias", d.anchorBias).coerceIn(0f, 1f),
+                holdMs = i("hold_ms", d.holdMs).coerceIn(0, 5000),
+                pollHz = i("poll_hz", d.pollHz).coerceIn(30, 250),
+                toggleButton = i("toggle_button", d.toggleButton),
+                startEnabled = b("start_enabled", d.startEnabled),
+                screenWidth = f("screen_width", d.screenWidth).coerceAtLeast(1f),
+                screenHeight = f("screen_height", d.screenHeight).coerceAtLeast(1f),
+                displayId = i("display_id", d.displayId),
+            )
+        }
     }
 
     fun save(context: Context) {
@@ -100,10 +151,4 @@ data class Settings(
         }.apply()
     }
 
-    /** Stages the config somewhere the app can write, for root to move into place. */
-    fun stage(context: Context): File {
-        val staged = File(context.cacheDir, "thoraim.conf")
-        staged.writeText(toConfigText())
-        return staged
-    }
 }

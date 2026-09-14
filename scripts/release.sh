@@ -19,8 +19,7 @@ echo "==> thoraim $current -> $next"
 sed -i "s/versionName = \"$current\"/versionName = \"$next\"/" "$gradle_file"
 sed -i "s/versionCode = $code/versionCode = $next_code/" "$gradle_file"
 
-./scripts/test-native.sh
-./scripts/build-native.sh
+./gradlew :app:testDebugUnitTest
 ./gradlew :app:assembleRelease
 
 apk="app/build/outputs/apk/release/app-release.apk"
@@ -36,12 +35,6 @@ if [ "$built" != "$next" ]; then
   exit 1
 fi
 
-# And that the daemon inside it is the one just compiled, not a stale copy.
-if ! unzip -l "$apk" | grep -q "lib/arm64-v8a/libthoraim.so"; then
-  echo "APK has no daemon in it" >&2
-  exit 1
-fi
-
 git add -A
 git commit -m "Release $next"
 git push origin HEAD
@@ -50,7 +43,7 @@ release_apk="thoraim-$next.apk"
 cp "$apk" "$release_apk"
 gh release create "$next" "$release_apk" \
   --title "thoraim $next" \
-  --notes "Right-stick aiming for NIKKE on the AYN Thor. Needs root." \
+  --notes "Right-stick aiming for NIKKE on the AYN Thor. Needs Shizuku, not root." \
   --target "$(git rev-parse HEAD)"
 rm -f "$release_apk"
 
