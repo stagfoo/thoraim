@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">thoraim</string>
+    <string name="accessibility_description">Lets thoraim drag a finger across the screen, so the right stick can aim in games that only read touch. It never reads screen content.</string>
 </resources>

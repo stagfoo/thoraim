@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  canPerformGestures is the permission that matters: it is what allows
+  dispatchGesture, which is the only way an ordinary app puts touch into
+  another app without root.
+
+  No event types and no package filter, because this service never reads
+  anything about what is on screen. It only needs to be running.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_description"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRequestFilterKeyEvents="true"
+    android:canPerformGestures="true" />

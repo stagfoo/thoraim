@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- The overlay is only needed before Android 14, where it is the one way
+         a background app can see a gamepad stick at all. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:label="thoraim"
@@ -19,14 +21,16 @@
             </intent-filter>
         </activity>
 
-        <!-- How Shizuku hands this app the shell-uid privileges it needs. The
-             permission is requested at runtime like any other. -->
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:multiprocess="false"
-            android:enabled="true"
+        <service
+            android:name=".AimAccessibilityService"
             android:exported="true"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service" />
+        </service>
     </application>
 </manifest>

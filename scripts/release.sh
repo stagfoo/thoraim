@@ -41,10 +41,10 @@ fi
 dexdump=$(ls -d "${ANDROID_HOME:-$HOME/development/android-sdk}"/build-tools/*/dexdump | sort -V | tail -1)
 work=$(mktemp -d)
 unzip -o -q "$apk" "classes*.dex" -d "$work"
-kept=$(for d in "$work"/*.dex; do "$dexdump" "$d" 2>/dev/null; done | grep -c "Lcom/thoraim/app/AimService;" || true)
+kept=$(for d in "$work"/*.dex; do "$dexdump" "$d" 2>/dev/null; done | grep -c "Lcom/thoraim/app/AimAccessibilityService;" || true)
 rm -rf "$work"
 if [ "$kept" -eq 0 ]; then
-  echo "R8 stripped AimService — Shizuku would fail to start it" >&2
+  echo "R8 stripped AimAccessibilityService — the system could not start it" >&2
   exit 1
 fi
 
@@ -56,7 +56,7 @@ release_apk="thoraim-$next.apk"
 cp "$apk" "$release_apk"
 gh release create "$next" "$release_apk" \
   --title "thoraim $next" \
-  --notes "Right-stick aiming for NIKKE on the AYN Thor. Needs Shizuku, not root." \
+  --notes "Right-stick aiming for NIKKE on the AYN Thor. Accessibility only: no root, no Shizuku." \
   --target "$(git rev-parse HEAD)"
 rm -f "$release_apk"
 

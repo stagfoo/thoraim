@@ -32,6 +32,22 @@ data class Settings(
     /** TOUCH, MOUSE or STYLUS — which pointer the injected events claim to be. */
     val injectMode: String = "TOUCH",
 ) {
+
+    /**
+     * The toggle as an Android keycode rather than an evdev one.
+     *
+     * Two numbering schemes for the same buttons: evdev calls right-stick-click
+     * 0x13E, Android calls it KEYCODE_BUTTON_THUMBR. Reading the pad through
+     * Android means speaking Android's, so the stored evdev code is translated
+     * rather than a second setting being invented for it.
+     */
+    fun toggleKeyCode(): Int = when (toggleButton) {
+        BTN_THUMBR -> android.view.KeyEvent.KEYCODE_BUTTON_THUMBR
+        BTN_THUMBL -> android.view.KeyEvent.KEYCODE_BUTTON_THUMBL
+        BTN_MODE -> android.view.KeyEvent.KEYCODE_BUTTON_MODE
+        else -> android.view.KeyEvent.KEYCODE_BUTTON_THUMBR
+    }
+
     fun toConfigText(): String = buildString {
         appendLine("# written by thoraim; edited live, reloaded on SIGHUP")
         appendLine("deadzone=$deadzone")

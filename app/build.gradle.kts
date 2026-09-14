@@ -59,12 +59,5 @@ android {
 }
 
 dependencies {
-    // Shizuku is what makes this work without root: it runs a service of ours
-    // as the shell uid, which is in the `input` group (so it can read
-    // /dev/input) and holds INJECT_EVENTS (so it can inject touch). Neither is
-    // reachable from an ordinary app uid, with or without focus.
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
-
     testImplementation("junit:junit:4.13.2")
 }

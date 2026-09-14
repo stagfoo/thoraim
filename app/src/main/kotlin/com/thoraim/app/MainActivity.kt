@@ -16,8 +16,6 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.app.Activity
-import android.content.pm.PackageManager
-import rikka.shizuku.Shizuku
 import kotlin.math.roundToInt
 
 /**
@@ -34,7 +32,7 @@ class MainActivity : Activity() {
     private lateinit var log: TextView
     private lateinit var travel: TextView
     private lateinit var probe: TextView
-    private lateinit var client: AimClient
+    private val overlay by lazy { StickOverlay(this) }
 
     private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
     private var watching = false
@@ -67,26 +65,10 @@ class MainActivity : Activity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    private val onPermission =
-        Shizuku.OnRequestPermissionResultListener { _, grantResult ->
-            runOnUiThread {
-                if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                    log.text = "Allowed. Press Start."
-                }
-                refreshStatus()
-            }
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = Settings.load(this)
-        client = AimClient(this)
         setContentView(buildUi())
-        try {
-            Shizuku.addRequestPermissionResultListener(onPermission)
-        } catch (e: Throwable) {
-            // Shizuku is not installed; the status line will say so.
-        }
         refreshStatus()
     }
 
@@ -99,11 +81,6 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopWatching()
-        try {
-            Shizuku.removeRequestPermissionResultListener(onPermission)
-        } catch (e: Throwable) {
-            // Nothing bound.
-        }
         super.onDestroy()
     }
 
@@ -121,13 +98,14 @@ class MainActivity : Activity() {
      * two of them that is the difference between aiming the game and aiming the
      * other screen.
      */
-    private fun outgoing(): String {
+    /** The settings, plus the screen this app is actually on. */
+    private fun current(): Settings {
         val (width, height) = windowBounds()
         return settings.copy(
             screenWidth = width,
             screenHeight = height,
             displayId = currentDisplayId(),
-        ).toConfigText()
+        )
     }
 
     private fun windowBounds(): Pair<Float, Float> {
@@ -291,33 +269,6 @@ class MainActivity : Activity() {
             ) { settings = settings.copy(pollHz = it.roundToInt()); onChanged() }
         )
 
-        root.addView(section("Pretend to be"))
-        root.addView(
-            note(
-                "Which kind of pointer the injected events claim to come from. " +
-                    "NIKKE is a Unity game and which one it listens to is not " +
-                    "something that can be worked out from the outside — try " +
-                    "each with Test drag."
-            )
-        )
-        for (candidate in listOf("TOUCH", "MOUSE", "STYLUS")) {
-            root.addView(
-                button(candidate.lowercase()) {
-                    settings = settings.copy(injectMode = candidate)
-                    settings.save(this)
-                    try {
-                        client.get()?.setMode(candidate)
-                    } catch (e: Throwable) {
-                        // Not running; Start will send it.
-                    }
-                    log.text = "Now injecting as ${candidate.lowercase()}. " +
-                        "Press Test drag."
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
-                }
-            )
-        }
-
         root.addView(
             check("Invert Y", settings.invertY) {
                 settings = settings.copy(invertY = it); onChanged()
@@ -351,59 +302,67 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ acts
 
+    private fun service(): AimAccessibilityService? = AimAccessibilityService.instance
+
     private fun startDaemon() {
-        when (Privilege.state()) {
-            Privilege.State.Unavailable -> {
-                status.text = Privilege.describe()
-                log.text = SETUP_HELP
-                return
-            }
-            Privilege.State.NeedsPermission -> {
-                Privilege.requestPermission()
-                return
-            }
-            Privilege.State.Ready -> Unit
+        if (!AimAccessibilityService.isEnabled(this)) {
+            log.text = SETUP_HELP
+            status.text = "Turn thoraim on in Accessibility settings."
+            startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            )
+            return
+        }
+        val running = service()
+        if (running == null) {
+            status.text = "Accessibility is on but the service has not started " +
+                "yet — toggle it off and on."
+            return
         }
 
         settings.save(this)
-        client.connect { service ->
-            runOnUiThread {
-                if (service == null) {
-                    status.text = "Could not start the service through Shizuku."
-                    return@runOnUiThread
-                }
-                log.text = try {
-                    service.start(outgoing())
-                } catch (e: Throwable) {
-                    "start failed: ${e.message}"
-                }
-                refreshStatus()
-            }
-        }
+        // Before Android 14 the stick can only be seen by a focused window, so
+        // the overlay has to be up before aiming will do anything at all.
+        if (Build.VERSION.SDK_INT < 34) ensureOverlay()
+
+        log.text = running.start(current())
+        refreshStatus()
     }
 
     private fun stopDaemon() {
-        try {
-            client.get()?.stop()
-        } catch (e: Throwable) {
-            // Already gone.
-        }
+        service()?.stop()
+        overlay.hide()
         refreshStatus()
     }
 
     private fun onApply() {
         settings.save(this)
-        val service = client.get()
-        if (service == null) {
+        val running = service()
+        if (running == null) {
             status.text = "Saved. Not running — press Start."
             return
         }
-        try {
-            service.reconfigure(outgoing())
-            status.text = "Applied to the running service."
-        } catch (e: Throwable) {
-            status.text = "Could not apply: ${e.message}"
+        running.reconfigure(current())
+        status.text = "Applied."
+    }
+
+    /**
+     * Puts the focus-catching overlay up, asking for the permission if needed.
+     *
+     * Only ever called below Android 14. From 14 the service is handed motion
+     * events directly and there is nothing to put on screen.
+     */
+    private fun ensureOverlay() {
+        if (!StickOverlay.canDraw(this)) {
+            startActivity(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:$packageName"),
+                )
+            )
+            return
         }
+        overlay.show { event -> service()?.readStick(event) }
     }
 
     private fun onChanged() {
@@ -427,22 +386,19 @@ class MainActivity : Activity() {
     }
 
     private fun refreshStatus() {
-        val state = Privilege.state()
-        val running = try {
-            client.get()?.isRunning == true
-        } catch (e: Throwable) {
-            false
-        }
+        val allowed = AimAccessibilityService.isEnabled(this)
+        val running = service()?.isRunning == true
+        val needsOverlay = Build.VERSION.SDK_INT < 34 && !StickOverlay.canDraw(this)
 
         status.text = when {
-            state == Privilege.State.Unavailable -> Privilege.describe()
-            state == Privilege.State.NeedsPermission -> "Shizuku is running. Press Start to allow thoraim."
+            !allowed -> "Turn thoraim on in Accessibility settings."
+            needsOverlay -> "Also needs 'draw over other apps' on this Android version."
             running -> "Running. R3 toggles aiming."
-            else -> "Shizuku ready. Not running."
+            else -> "Ready. Not running."
         }
         status.setTextColor(
             when {
-                state == Privilege.State.Unavailable -> Color.parseColor("#E0725A")
+                !allowed || needsOverlay -> Color.parseColor("#E0725A")
                 running -> Color.parseColor("#9BE28B")
                 else -> Color.parseColor("#C9A227")
             }
@@ -461,7 +417,7 @@ class MainActivity : Activity() {
             stopWatching()
             return
         }
-        if (client.get() == null) {
+        if (service() == null) {
             probe.text = "Not running — press Start first."
             return
         }
@@ -476,11 +432,7 @@ class MainActivity : Activity() {
 
     private fun pollProbe() {
         if (!watching) return
-        probe.text = try {
-            client.get()?.probe() ?: "service went away"
-        } catch (e: Throwable) {
-            "probe failed: ${e.message}"
-        }
+        probe.text = service()?.probe() ?: "service went away"
         ticker.postDelayed({ pollProbe() }, 100)
     }
 
@@ -493,21 +445,16 @@ class MainActivity : Activity() {
      * cases need completely different fixes, and nothing else tells them apart.
      */
     private fun runTestDrag() {
-        val service = client.get()
+        val service = service()
         if (service == null) {
             log.text = "Not running — press Start first."
             return
         }
-        log.text = "Testing ${settings.injectMode.lowercase()}…"
+        log.text = "Testing…"
         Thread {
             val bounds = windowBounds()
             val result = try {
-                service.testDrag(
-                    settings.injectMode,
-                    bounds.first,
-                    bounds.second,
-                    currentDisplayId(),
-                )
+                service.testDrag(bounds.first, bounds.second, currentDisplayId())
             } catch (e: Throwable) {
                 "test failed: ${e.message}"
             }
@@ -524,7 +471,7 @@ class MainActivity : Activity() {
      * deviceId of whatever *did* arrive says why.
      */
     private fun runSelfTest() {
-        val service = client.get()
+        val service = service()
         if (service == null) {
             log.text = "Not running — press Start first."
             return
@@ -536,7 +483,7 @@ class MainActivity : Activity() {
         Thread {
             val (width, height) = windowBounds()
             val sent = try {
-                service.testDrag(settings.injectMode, width, height, currentDisplayId())
+                service.testDrag(width, height, currentDisplayId())
             } catch (e: Throwable) {
                 "test failed: ${e.message}"
             }
@@ -566,26 +513,48 @@ class MainActivity : Activity() {
     }
 
     private fun runDiagnose() {
-        val service = client.get()
-        if (service == null) {
-            // Everything useful lives in the service, so without it the only
-            // honest answer is why there isn't one.
-            log.text = "Not running.\n\n${Privilege.describe()}\n\n$SETUP_HELP"
-            return
-        }
-        log.text = try {
-            service.diagnose()
-        } catch (e: Throwable) {
-            "diagnose failed: ${e.message}"
+        log.text = buildString {
+            append("Android ${Build.VERSION.SDK_INT}")
+            append(if (Build.VERSION.SDK_INT >= 34) " — motion events available" else " — needs the overlay")
+            append("\naccessibility enabled: ${AimAccessibilityService.isEnabled(this@MainActivity)}")
+            append("\nservice connected: ${service() != null}")
+            append("\noverlay permitted: ${StickOverlay.canDraw(this@MainActivity)}")
+            append(", showing: ${overlay.showing}")
+            val (w, h) = windowBounds()
+            append("\nthis window: ${w.toInt()}x${h.toInt()} on display ${currentDisplayId()}")
+
+            append("\n\npads Android can see:\n")
+            var found = 0
+            for (id in android.view.InputDevice.getDeviceIds()) {
+                val device = android.view.InputDevice.getDevice(id) ?: continue
+                val sources = device.sources
+                val isPad =
+                    sources and android.view.InputDevice.SOURCE_GAMEPAD != 0 ||
+                        sources and android.view.InputDevice.SOURCE_JOYSTICK != 0
+                if (!isPad) continue
+                found++
+                append("  \"${device.name}\"\n")
+                for (axis in listOf(
+                    android.view.MotionEvent.AXIS_RX to "RX",
+                    android.view.MotionEvent.AXIS_RY to "RY",
+                    android.view.MotionEvent.AXIS_Z to "Z",
+                    android.view.MotionEvent.AXIS_RZ to "RZ",
+                )) {
+                    val range = device.getMotionRange(axis.first)
+                    if (range != null) {
+                        append("     ${axis.second} ${range.min}..${range.max}\n")
+                    }
+                }
+            }
+            if (found == 0) append("  (none — is the pad awake?)\n")
+
+            append("\n")
+            append(service()?.probe() ?: "service not connected")
         }
     }
 
     private fun refreshLog() {
-        log.text = try {
-            client.get()?.status() ?: SETUP_HELP
-        } catch (e: Throwable) {
-            "status failed: ${e.message}"
-        }
+        log.text = service()?.report ?: SETUP_HELP
     }
 
     // ----------------------------------------------------------------- views
@@ -670,14 +639,12 @@ class MainActivity : Activity() {
                     if (fromUser) onChange(v)
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) = Unit
-                // Only pushed on release: a reconfigure per pixel of slider
-                // travel would be a few hundred Binder calls a second.
+                // Only pushed on release: reconfiguring per pixel of slider
+                // travel would rebuild the aim state hundreds of times a second.
                 override fun onStopTrackingTouch(bar: SeekBar?) {
-                    try {
-                        this@MainActivity.client.get()?.reconfigure(outgoing())
-                    } catch (e: Throwable) {
-                        // The service is not up; Start will send it anyway.
-                    }
+                    AimAccessibilityService.instance?.reconfigure(
+                        this@MainActivity.current()
+                    )
                 }
             })
         })
@@ -696,13 +663,14 @@ class MainActivity : Activity() {
 
     private companion object {
         const val SETUP_HELP =
-            "thoraim needs Shizuku, which grants shell privileges without root.\n\n" +
-                "1. Install Shizuku from the Play Store or GitHub.\n" +
-                "2. Start it with wireless debugging (Shizuku walks you through " +
-                "it) — this has to be redone after a reboot.\n" +
-                "3. Come back and press Start, then allow thoraim.\n\n" +
-                "Shell is in the `input` group and holds INJECT_EVENTS, which " +
-                "is why it can read the stick and inject touch while a game is " +
-                "in front. An ordinary app uid can do neither."
+            "thoraim needs Accessibility, and on Android 13 and below also " +
+                "'draw over other apps'.\n\n" +
+                "1. Settings > Accessibility > thoraim > on.\n" +
+                "2. If asked, allow drawing over other apps.\n" +
+                "3. Come back and press Start.\n\n" +
+                "Accessibility is what allows dispatchGesture — the only way " +
+                "an ordinary app puts touch into another app without root. " +
+                "The overlay is only needed before Android 14, where a focused " +
+                "window is the one thing that can see a gamepad stick."
     }
 }
