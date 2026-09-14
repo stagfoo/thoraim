@@ -35,6 +35,19 @@ if [ "$built" != "$next" ]; then
   exit 1
 fi
 
+# R8 strips anything it cannot trace a call to, and Shizuku loads the service
+# by name from another process — so a missing keep rule builds, installs, and
+# fails only when Start is pressed. Checked here rather than on the device.
+dexdump=$(ls -d "${ANDROID_HOME:-$HOME/development/android-sdk}"/build-tools/*/dexdump | sort -V | tail -1)
+work=$(mktemp -d)
+unzip -o -q "$apk" "classes*.dex" -d "$work"
+kept=$(for d in "$work"/*.dex; do "$dexdump" "$d" 2>/dev/null; done | grep -c "Lcom/thoraim/app/AimService;" || true)
+rm -rf "$work"
+if [ "$kept" -eq 0 ]; then
+  echo "R8 stripped AimService — Shizuku would fail to start it" >&2
+  exit 1
+fi
+
 git add -A
 git commit -m "Release $next"
 git push origin HEAD

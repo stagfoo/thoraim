@@ -6,6 +6,7 @@ interface IAimService {
     void reconfigure(String configText) = 3;
     boolean isRunning() = 4;
     String status() = 5;
+    String probe() = 6;
     // Shizuku calls this transaction to shut a user service down. Its id is
     // fixed by Shizuku, so every method needs an explicit one alongside it.
     void destroy() = 16777114;

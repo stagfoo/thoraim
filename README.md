@@ -64,6 +64,12 @@ middle throws away half the travel before you have moved.
 
 Sliders apply live over Binder without dropping the stroke that is down.
 
+**If it does not work**, press *Watch the stick* first. Reading the pad and
+injecting touch are two separate privileges that fail separately, and a dead aim
+looks identical whichever one broke. If those numbers move when you push the
+stick, evdev is fine and the problem is injection — which the same readout
+reports.
+
 ## Layout
 
 ```

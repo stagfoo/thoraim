@@ -41,6 +41,33 @@ class AimService : IAimService.Stub() {
 
     override fun status(): String = report
 
+    /**
+     * What the stick is doing, right now.
+     *
+     * Worth its weight the first time this runs on a device: reading the pad
+     * and injecting touch are two entirely separate privileges that fail in
+     * entirely separate ways, and without this a dead aim looks identical
+     * whichever half broke. If the numbers here move, evdev is working and the
+     * problem is injection.
+     */
+    override fun probe(): String {
+        if (!running) return "not running"
+        if (!haveX && !haveY) {
+            return "no axis events yet — move the right stick"
+        }
+        val nx = rangeX.normalise(rawX)
+        val ny = rangeY.normalise(rawY)
+        val mag = kotlin.math.hypot(nx, ny)
+        return buildString {
+            append("stick %+.2f, %+.2f  (|%.2f|)".format(nx, ny, mag))
+            append(if (mag <= settings.deadzone) "  in deadzone" else "  live")
+            append("\nraw $rawX, $rawY   range x=$rangeX y=$rangeY")
+            append("\nfinger ${if (injector.isDown) "down" else "up"}")
+            append(", aiming ${if (enabled) "on" else "off (R3)"}")
+            injector.lastError?.let { append("\ninject error: $it") }
+        }
+    }
+
     override fun start(configText: String): String {
         if (running) return report
         settings = Settings.parse(configText)

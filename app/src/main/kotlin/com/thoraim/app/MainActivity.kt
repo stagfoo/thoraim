@@ -33,7 +33,11 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var log: TextView
     private lateinit var travel: TextView
+    private lateinit var probe: TextView
     private lateinit var client: AimClient
+
+    private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+    private var watching = false
 
     private val onPermission =
         Shizuku.OnRequestPermissionResultListener { _, grantResult ->
@@ -58,7 +62,15 @@ class MainActivity : Activity() {
         refreshStatus()
     }
 
+    override fun onPause() {
+        // Nothing to watch while the app is not in front, and a poll left
+        // running would keep a Binder call going every 100ms for no one.
+        stopWatching()
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        stopWatching()
         try {
             Shizuku.removeRequestPermissionResultListener(onPermission)
         } catch (e: Throwable) {
@@ -129,6 +141,20 @@ class MainActivity : Activity() {
         buttons.addView(button("Apply") { onApply() })
         buttons.addView(button("Log") { refreshLog() })
         root.addView(buttons)
+
+        probe = TextView(this).apply {
+            setTextColor(Color.parseColor("#8FB8D4"))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, dp(8), 0, 0)
+            text = "Press Watch to see the stick."
+        }
+        root.addView(probe)
+        root.addView(
+            button("Watch the stick") { toggleWatching() }.apply {
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            }
+        )
 
         root.addView(section("Feel"))
 
@@ -356,6 +382,41 @@ class MainActivity : Activity() {
                 else -> Color.parseColor("#C9A227")
             }
         )
+    }
+
+    /**
+     * Polls the service for what the stick is doing.
+     *
+     * Reading the pad and injecting touch are two separate privileges that fail
+     * separately. Without this, a dead aim looks the same whichever one broke —
+     * with it, "do these numbers move" answers the question in two seconds.
+     */
+    private fun toggleWatching() {
+        if (watching) {
+            stopWatching()
+            return
+        }
+        if (client.get() == null) {
+            probe.text = "Not running — press Start first."
+            return
+        }
+        watching = true
+        pollProbe()
+    }
+
+    private fun stopWatching() {
+        watching = false
+        ticker.removeCallbacksAndMessages(null)
+    }
+
+    private fun pollProbe() {
+        if (!watching) return
+        probe.text = try {
+            client.get()?.probe() ?: "service went away"
+        } catch (e: Throwable) {
+            "probe failed: ${e.message}"
+        }
+        ticker.postDelayed({ pollProbe() }, 100)
     }
 
     private fun refreshLog() {
