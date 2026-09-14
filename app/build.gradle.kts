@@ -14,8 +14,8 @@ android {
         // binary would not load anyway.
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // Only the Thor's architecture. Shipping the other three would
         // quadruple an APK whose whole point is being small, for devices this
