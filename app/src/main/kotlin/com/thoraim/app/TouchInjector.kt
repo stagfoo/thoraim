@@ -44,8 +44,18 @@ class TouchInjector {
     var lastError: String? = null
         private set
 
-    /** Async: do not wait for the event to be handled. Waiting would pace us to the game's frame rate. */
+    /**
+     * Async: do not wait for the event to be handled. Waiting would pace every
+     * injection to the game's frame rate, which is the thing latency is being
+     * spent on.
+     *
+     * The `input` command uses WAIT_FOR_FINISH instead, so that is kept as a
+     * fallback: if async is refused on this build, the slower mode is still
+     * better than nothing.
+     */
     private val modeAsync = 0
+    private val modeWaitForFinish = 2
+    private var injectMode = modeAsync
 
     fun prepare(): Boolean {
         if (injector != null) return true
@@ -58,7 +68,7 @@ class TouchInjector {
                 android.view.InputEvent::class.java,
                 Int::class.javaPrimitiveType,
             )
-            injector = { event -> inject.invoke(manager, event, modeAsync) as? Boolean ?: false }
+            injector = { event -> inject.invoke(manager, event, injectMode) as? Boolean ?: false }
             return true
         } catch (e: Throwable) {
             lastError = "${e.javaClass.simpleName}: ${e.message}"
@@ -75,7 +85,7 @@ class TouchInjector {
                 android.view.InputEvent::class.java,
                 Int::class.javaPrimitiveType,
             )
-            injector = { event -> inject.invoke(global, event, modeAsync) as? Boolean ?: false }
+            injector = { event -> inject.invoke(global, event, injectMode) as? Boolean ?: false }
             lastError = null
             return true
         } catch (e: Throwable) {

@@ -78,10 +78,15 @@ whether `injectInputEvent` resolved.
 **Watch the stick** — live axis values. If these move when you push the stick,
 evdev is working and the problem is downstream.
 
-**Test drag** — sends one visible drag across the middle of the screen. If it
-scrolls a list in *any* app, injection works and what is wrong is the stick, the
-region or the game. If it does nothing anywhere, injection is the problem and no
-aiming setting matters yet.
+**Self test** — injects a drag onto thoraim's own window and reports whether it
+arrived. This is the one check that needs no interpretation: the app establishes
+a fact about itself rather than asking you whether a list twitched. If events
+arrive, injection works and anything still wrong is the game or the stick. If
+nothing arrives, injection is not reaching the dispatcher and no aiming setting
+matters yet.
+
+**Test drag** — the same drag, but aimed at whatever is in front. Use it once the
+self test passes, to find out whether the game in particular ignores it.
 
 ### Pretend to be
 

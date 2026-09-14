@@ -39,6 +39,34 @@ class MainActivity : Activity() {
     private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
     private var watching = false
 
+    /**
+     * Whether a self-test is in flight, and what arrived while it was.
+     *
+     * The app injects a drag onto its own window and watches for it coming back
+     * in. That closes the loop: "did anything happen" stops being a judgement
+     * call about whether a list twitched, and becomes a fact this process can
+     * establish about itself.
+     */
+    @Volatile private var selfTesting = false
+    private val caught = mutableListOf<String>()
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (selfTesting) {
+            synchronized(caught) {
+                caught.add(
+                    "%s at %.0f,%.0f  source=0x%x deviceId=%d toolType=%d".format(
+                        android.view.MotionEvent.actionToString(ev.actionMasked),
+                        ev.x, ev.y, ev.source, ev.deviceId,
+                        ev.getToolType(0),
+                    )
+                )
+            }
+            // Swallowed so a synthetic drag cannot press a button under it.
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     private val onPermission =
         Shizuku.OnRequestPermissionResultListener { _, grantResult ->
             runOnUiThread {
@@ -149,6 +177,7 @@ class MainActivity : Activity() {
         val checks = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         checks.addView(button("Diagnose") { runDiagnose() })
         checks.addView(button("Test drag") { runTestDrag() })
+        checks.addView(button("Self test") { runSelfTest() })
         root.addView(checks)
 
         probe = TextView(this).apply {
@@ -483,6 +512,56 @@ class MainActivity : Activity() {
                 "test failed: ${e.message}"
             }
             runOnUiThread { log.text = result }
+        }.start()
+    }
+
+    /**
+     * Injects a drag onto this app's own window and reports what came back.
+     *
+     * The one check that needs no interpretation. If the events arrive here,
+     * injection works and everything still wrong is about the game or the
+     * stick. If they do not, injection is the problem, and the source and
+     * deviceId of whatever *did* arrive says why.
+     */
+    private fun runSelfTest() {
+        val service = client.get()
+        if (service == null) {
+            log.text = "Not running — press Start first."
+            return
+        }
+        synchronized(caught) { caught.clear() }
+        selfTesting = true
+        log.text = "Injecting onto this window…"
+
+        Thread {
+            val (width, height) = windowBounds()
+            val sent = try {
+                service.testDrag(settings.injectMode, width, height, currentDisplayId())
+            } catch (e: Throwable) {
+                "test failed: ${e.message}"
+            }
+            Thread.sleep(400)
+            selfTesting = false
+
+            val seen = synchronized(caught) { caught.toList() }
+            runOnUiThread {
+                log.text = buildString {
+                    append(sent).append("\n\n")
+                    if (seen.isEmpty()) {
+                        append("NOTHING arrived at this app's own window.\n")
+                        append("Injection is not reaching the input dispatcher, ")
+                        append("so no aiming setting matters yet. Send me the ")
+                        append("Diagnose output.")
+                    } else {
+                        append("${seen.size} events arrived here:\n")
+                        append(seen.take(3).joinToString("\n"))
+                        if (seen.size > 3) append("\n  …")
+                        append("\n\nInjection works. If aiming still does ")
+                        append("nothing in NIKKE, the game is either ignoring ")
+                        append("synthetic input or is on another display.")
+                    }
+                }
+            }
         }.start()
     }
 
