@@ -14,8 +14,8 @@ android {
         // binary would not load anyway.
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         // Bumped whenever the service's own code changes, so Shizuku restarts
         // it instead of leaving an old copy running against a new app.
